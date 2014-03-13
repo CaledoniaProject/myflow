@@ -15,9 +15,6 @@ User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit (KHTML, like Gecko) Chro
 Referer: http://ubuntu32/wp37/
 Accept-Encoding: gzip,deflate,sdch
 Accept-Language: en-US,en;q=0.8,fr;q=0.6,zh-CN;q=0.4,zh;q=0.2,zh-TW;q=0.2,hr;q=0.2
-AlexaToolbar-ALX_NS_PH: AlexaToolbar/alxg-3.2
-X-Forwarded-For: 173.19.156.3
-X-Real-IP: 173.19.156.3
 
 
 -- End Packet --
