@@ -1,5 +1,11 @@
 ### My HTTP flow ###
+TCP assembling / HTTP assmebling, support HTTP pipeling
 
+### Example ###
+
+./main xx.pcap
+
+<pre>
 -- Packet size: 494, Time: 1394682304, Tuple: 192.168.56.1:40968:192.168.56.178:80
 GET /wp37/wp-content/themes/twentythirteen/images/search-icon.png HTTP/1.1
 Host: ubuntu32
@@ -15,4 +21,4 @@ X-Real-IP: 173.19.156.3
 
 
 -- End Packet --
-
+</pre>
