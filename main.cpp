@@ -287,7 +287,10 @@ void help ()
 {
     fprintf(stderr, "myflow [input pcaps] ...\n"
             "-or-\n"
-            "myflow -i eth0 ...\n");
+            "myflow -i eth0 ...\n\n"
+            "arguments: \n"
+            "-f bpf filter"
+            "-h show this dialog\n\n");
     exit(1);
 }
 
