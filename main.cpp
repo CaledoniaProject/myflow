@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <pcap.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <netinet/ip.h>
 #include <netinet/ether.h>
 #define __FAVOR_BSD
@@ -40,94 +41,86 @@ void dumppair (const unordered_map<string, string> & data);
 bool process_http (time_t *ts, const string & id, string & bytes);
 bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result);
 char *strnstr (const char *s, const char *find, size_t slen);
+void help ();
+void loop (pcap_t *handle);
 
 int main(int argc, char **argv)
 {
-    struct pcap_pkthdr header;
-    const u_char *packet;
     pcap_t *handle;
-    char errbuf[PCAP_ERRBUF_SIZE];
+    struct bpf_program bpf;
+    char errbuf[PCAP_ERRBUF_SIZE], *device = NULL, *filter = NULL;
+    bpf_u_int32 net, mask;
+    int arg;
 
-    if (argc < 2)
+    while ((arg = getopt (argc, argv, "i:hf:")) != -1)
     {
-        fprintf(stderr, "%s [input pcaps] ...\n", argv[0]);
-        exit(1);
+        switch (arg)
+        {
+            case 'i':
+                device = optarg;
+                break;
+            case 'f':
+                filter = optarg;
+                break;
+            case 'h':
+                help ();
+                break;
+            default:
+                break;
+        }
     }
+
+    if (argc < 2 && ! device)
+        help ();
 
     bytesMapping.reserve (MAX_ENTRY_COUNT);
 
-    for (int i = 1; i < argc; ++ i)
+    // alive
+    if (device)
     {
-        if (! (handle = pcap_open_offline(argv[i], errbuf)))
+        if (pcap_lookupnet(device, &net, &mask, errbuf) == -1) 
         {
-            fprintf(stderr, "Couldn't open pcap file %s: %s\n", argv[i], errbuf);
-            continue;
+            fprintf(stderr, "Can't get netmask for device %s: %s\n", device, errbuf);
+            exit (1);
         }
 
-        while (NULL != (packet = pcap_next(handle, &header)))
+        if (! (handle = pcap_open_live (device, BUFSIZ, 1, 0, errbuf)))
         {
-            bpf_u_int32 caplen = header.caplen, offset = 0;
+            fprintf(stderr, "pcap_open_live: %s\n", errbuf);
+            exit (1);
+        }
 
-            // ether header
-            if (caplen <= sizeof (struct ether_header))
+        if (filter && -1 == pcap_compile (handle, &bpf, filter, 0, mask))
+        {
+            fprintf(stderr, "pcap_compile: %s\n", errbuf);
+            exit (1);
+        }
+
+        if (-1 == pcap_setfilter (handle, &bpf))
+        {
+            fprintf(stderr, "pcap_setfilter: %s\n", errbuf);
+            exit (1);
+        }
+
+        loop(handle);
+        pcap_close(handle);
+    }
+    // offline
+    else 
+    {
+        for (int i = optind; i < argc; ++ i)
+        {
+            if (! (handle = pcap_open_offline(argv[i], errbuf)))
             {
-                cerr << "eth" << endl;
+                fprintf(stderr, "Couldn't open pcap file %s: %s\n", argv[i], errbuf);
                 continue;
             }
 
-            struct ether_header *eth_header = (struct ether_header *) packet;
-            offset += sizeof (ether_header);
-            if (ntohs(eth_header->ether_type) != ETHERTYPE_IP)
-            {
-                cerr << "ether" << endl;
-                continue;
-            }
+            loop(handle);
+            pcap_close(handle);  //close the pcap file
 
-            // ip header
-            if (offset >= caplen)
-            {
-                cerr << "ip" << endl;
-                continue;
-            }
-            struct ip *ip_header = (struct ip *) (packet + offset);
-            offset += ip_header->ip_hl * 4;
-
-            // tcp header
-            if (offset >= caplen)
-            {
-                cerr << "tcp" << endl;
-                continue;
-            }
-            struct tcphdr *tcp_header = (struct tcphdr *) (packet + offset);
-            offset += tcp_header->th_off * 4;
-
-            // http data
-            if (offset >= caplen)
-            {
-                cerr << "no more tcp" << endl;
-                continue;
-            }
-
-            char *srcip = strdup (inet_ntoa (ip_header->ip_src)),
-                 *dstip = strdup (inet_ntoa (ip_header->ip_dst)),
-                 tupleID [255];
-
-            snprintf (tupleID, 255, "%s:%d:%s:%d",
-                    srcip, ntohs (tcp_header->th_sport),
-                    dstip, ntohs (tcp_header->th_dport));
-
-            string value ((char*) (packet + offset), caplen - offset);
-            string key (tupleID);
-
-            addpair (&header.ts.tv_sec, key, value, bytesMapping, bytesLRU);
-
-            delete srcip; delete dstip;
-
-        } //end internal loop for reading packets (all in one file)
-
-        pcap_close(handle);  //close the pcap file
-
-    } // argv
+        } // argv
+    }
 
     dumppair (bytesMapping);
 
@@ -189,7 +182,7 @@ bool process_http (time_t *ts, const string & id, string & bytes)
 {
     // content-length
     size_t length;
-    
+
     // std::find sucks
     size_t minlen = std::min<size_t> (bytes.size(), 5);
     if (strnstr (bytes.c_str(), "GET ", minlen) != bytes.c_str()
@@ -290,23 +283,98 @@ bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result)
     return false;
 }
 
+void help ()
+{
+    fprintf(stderr, "myflow [input pcaps] ...\n"
+            "-or-\n"
+            "myflow -i eth0 ...\n");
+    exit(1);
+}
 
 char *strnstr (const char *s, const char *find, size_t slen)
 {
-        char c, sc;
-        size_t len;
+    char c, sc;
+    size_t len;
 
-        if ((c = *find++) != '\0') {
-                len = strlen(find);
-                do {
-                        do {
-                                if (slen-- < 1 || (sc = *s++) == '\0')
-                                        return (NULL);
-                        } while (sc != c);
-                        if (len > slen)
-                                return (NULL);
-                } while (strncmp(s, find, len) != 0);
-                s--;
+    if ((c = *find++) != '\0') {
+        len = strlen(find);
+        do {
+            do {
+                if (slen-- < 1 || (sc = *s++) == '\0')
+                    return (NULL);
+            } while (sc != c);
+            if (len > slen)
+                return (NULL);
+        } while (strncmp(s, find, len) != 0);
+        s--;
+    }
+    return ((char *)s);
+}
+
+void loop (pcap_t *handle)
+{
+    struct pcap_pkthdr header;
+    const u_char *packet;
+
+    while (NULL != (packet = pcap_next(handle, &header)))
+    {
+        bpf_u_int32 caplen = header.caplen, offset = 0;
+
+        // ether header
+        if (caplen <= sizeof (struct ether_header))
+        {
+            cerr << "eth" << endl;
+            continue;
         }
-        return ((char *)s);
+
+        struct ether_header *eth_header = (struct ether_header *) packet;
+        offset += sizeof (ether_header);
+        if (ntohs(eth_header->ether_type) != ETHERTYPE_IP)
+        {
+            cerr << "ether" << endl;
+            continue;
+        }
+
+        // ip header
+        if (offset >= caplen)
+        {
+            cerr << "ip" << endl;
+            continue;
+        }
+        struct ip *ip_header = (struct ip *) (packet + offset);
+        offset += ip_header->ip_hl * 4;
+
+        // tcp header
+        if (offset >= caplen)
+        {
+            cerr << "tcp" << endl;
+            continue;
+        }
+        struct tcphdr *tcp_header = (struct tcphdr *) (packet + offset);
+        offset += tcp_header->th_off * 4;
+
+        // http data
+        if (offset >= caplen)
+        {
+            cerr << "no more tcp" << endl;
+            continue;
+        }
+
+        char *srcip = strdup (inet_ntoa (ip_header->ip_src)),
+             *dstip = strdup (inet_ntoa (ip_header->ip_dst)),
+             tupleID [255];
+
+        snprintf (tupleID, 255, "%s:%d:%s:%d",
+                srcip, ntohs (tcp_header->th_sport),
+                dstip, ntohs (tcp_header->th_dport));
+
+        string value ((char*) (packet + offset), caplen - offset);
+        string key (tupleID);
+
+        addpair (&header.ts.tv_sec, key, value, bytesMapping, bytesLRU);
+
+        delete srcip; delete dstip;
+
+    } //end internal loop for reading packets (all in one file)
+
 }
