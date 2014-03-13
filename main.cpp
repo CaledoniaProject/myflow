@@ -1,0 +1,312 @@
+#include <stdio.h>
+#include <pcap.h>
+#include <stdlib.h>
+#include <netinet/ip.h>
+#include <netinet/ether.h>
+#define __FAVOR_BSD
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+
+#define ETHER_TYPE_IP (0x0800)
+#define ETHER_TYPE_8021Q (0x8100)
+#define MAX_ENTRY_COUNT 50000
+
+#include <cstring>
+#include <vector>
+#include <unordered_map>
+#include <iterator>
+#include <list>
+#include <algorithm>
+#include <iostream>
+
+#ifdef SECURE
+#include <antidebug.h>
+#endif
+
+#ifdef DEBUG 
+#define D(x) x
+#else 
+#define D(x)
+#endif
+
+using namespace std;
+unordered_map<string, string> bytesMapping;
+list<string> bytesLRU;
+
+void addpair (time_t *ts, const string & key, string & value,
+        unordered_map<string, string> & data,
+        list<string> & lru);
+void dumppair (const unordered_map<string, string> & data);
+bool process_http (time_t *ts, const string & id, string & bytes);
+bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result);
+char *strnstr (const char *s, const char *find, size_t slen);
+
+int main(int argc, char **argv)
+{
+    struct pcap_pkthdr header;
+    const u_char *packet;
+    pcap_t *handle;
+    char errbuf[PCAP_ERRBUF_SIZE];
+
+    if (argc < 2)
+    {
+        fprintf(stderr, "%s [input pcaps] ...\n", argv[0]);
+        exit(1);
+    }
+
+    bytesMapping.reserve (MAX_ENTRY_COUNT);
+
+    for (int i = 1; i < argc; ++ i)
+    {
+        if (! (handle = pcap_open_offline(argv[i], errbuf)))
+        {
+            fprintf(stderr, "Couldn't open pcap file %s: %s\n", argv[i], errbuf);
+            continue;
+        }
+
+        while (NULL != (packet = pcap_next(handle, &header)))
+        {
+            bpf_u_int32 caplen = header.caplen, offset = 0;
+
+            // ether header
+            if (caplen <= sizeof (struct ether_header))
+            {
+                cerr << "eth" << endl;
+                continue;
+            }
+
+            struct ether_header *eth_header = (struct ether_header *) packet;
+            offset += sizeof (ether_header);
+            if (ntohs(eth_header->ether_type) != ETHERTYPE_IP)
+            {
+                cerr << "ether" << endl;
+                continue;
+            }
+
+            // ip header
+            if (offset >= caplen)
+            {
+                cerr << "ip" << endl;
+                continue;
+            }
+            struct ip *ip_header = (struct ip *) (packet + offset);
+            offset += ip_header->ip_hl * 4;
+
+            // tcp header
+            if (offset >= caplen)
+            {
+                cerr << "tcp" << endl;
+                continue;
+            }
+            struct tcphdr *tcp_header = (struct tcphdr *) (packet + offset);
+            offset += tcp_header->th_off * 4;
+
+            // http data
+            if (offset >= caplen)
+            {
+                cerr << "no more tcp" << endl;
+                continue;
+            }
+
+            char *srcip = strdup (inet_ntoa (ip_header->ip_src)),
+                 *dstip = strdup (inet_ntoa (ip_header->ip_dst)),
+                 tupleID [255];
+
+            snprintf (tupleID, 255, "%s:%d:%s:%d",
+                    srcip, ntohs (tcp_header->th_sport),
+                    dstip, ntohs (tcp_header->th_dport));
+
+            string value ((char*) (packet + offset), caplen - offset);
+            string key (tupleID);
+
+            addpair (&header.ts.tv_sec, key, value, bytesMapping, bytesLRU);
+
+            delete srcip; delete dstip;
+
+        } //end internal loop for reading packets (all in one file)
+
+        pcap_close(handle);  //close the pcap file
+
+    } // argv
+
+    dumppair (bytesMapping);
+
+    return 0; //done
+} // main()
+
+void dumppair (const unordered_map<string, string> & data)
+{
+    for (unordered_map<string, string>::const_iterator iter = data.begin();
+            iter != data.end(); ++ iter)
+    {
+        cerr << "ID: " << iter->first << endl;
+        cerr << "Content: " << iter->second << endl << endl;
+    }
+}
+
+void addpair (time_t *ts, const string & key, string & value, unordered_map<string, string> & data, list<string> & lru)
+{
+    unordered_map<string, string>::iterator iter = data.find (key);
+    if (iter == data.end())
+    {
+        if (process_http (ts, key, value))
+            return;
+
+        if (data.size() == MAX_ENTRY_COUNT)
+        {
+            data.erase (lru.front());
+            lru.pop_front();
+        }
+
+        data[key] = value;
+        lru.push_back (key);
+    }
+    else
+    {
+        string combined = (*iter).second + value;
+        if (process_http (ts, key, combined))
+        {
+            data.erase (key);
+            return;
+        }
+
+        data[key] = value;
+    }
+}
+
+bool lower_test (const char & l, const char & r) {
+    return (std::tolower(l) == std::tolower(r));
+}
+
+void dump_packet (time_t *ts, const string & id, const string & bytes)
+{
+    cout << "-- Packet size: " << bytes.size() << ", Time: " << *ts << ", Tuple: " << id << endl;
+    cout << bytes << endl;
+    cout << "-- End Packet --" << endl << endl;
+}
+
+bool process_http (time_t *ts, const string & id, string & bytes)
+{
+    // content-length
+    size_t length;
+    
+    // std::find sucks
+    size_t minlen = std::min<size_t> (bytes.size(), 5);
+    if (strnstr (bytes.c_str(), "GET ", minlen) != bytes.c_str()
+            && strnstr (bytes.c_str(), "POST ", minlen) != bytes.c_str())
+        return true;
+
+    // Incomplete, either GET or POST
+    size_t payloadPos = bytes.find ("\r\n\r\n");
+    if (payloadPos == bytes.npos)
+        return false;
+
+    // No Content-Length header, ignore payloads even if supplied
+    if (! KMP_getContentLength (bytes.c_str(), payloadPos, length))
+    {
+        // Ending here
+        if (payloadPos < bytes.size() - 1)
+        {
+            dump_packet (ts, id, bytes);
+            return true;
+        }
+        else
+        {
+            // pos of payload + length("\r\n\r\n")
+            size_t length = payloadPos + 4;
+
+            D(
+                    size_t actual = bytes.size();
+                    cerr << " --- Exception --- " << id << endl
+                    << "HTTP Pipelining detected! Consumed " << length << " bytes. "
+                    << "remaining: " << actual - length << " bytes" << endl
+                    << "The multiple bytes are: " << bytes << endl << endl;);
+
+            dump_packet (ts, id, bytes.substr(0, length));
+
+            bytes.erase (0, length);
+            return process_http (ts, id, bytes);
+        }
+    }
+    else
+    {
+        size_t actual = bytes.size() - payloadPos - 4;
+
+        if (length == actual)
+        {
+            dump_packet (ts, id, bytes);
+            return true;
+        }
+        else if (actual > length)
+        {
+            D(cerr << " --- Exception --- " << id << endl
+                    << "HTTP Pipelining detected! Consumed " << length << " bytes. "
+                    << "remaining: " << actual - length << " bytes" << endl
+                    << "The multiple bytes are: " << bytes << endl << endl;);
+
+            dump_packet (ts, id, bytes.substr(0, length));
+
+            bytes.erase (0, payloadPos + 4 + length);
+            return process_http (ts, id, bytes);
+        }
+        else
+        {
+            D(cerr << " --- Exception --- Unfinished POST request: " << id << endl
+                    << "Expecting: " << length << ", actual: " << actual << endl
+                    << "Current we have: " << bytes << endl
+                    << endl << endl;);
+        }
+    }
+
+    return false;
+}
+
+
+bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result)
+{
+    static const char *needle = "content-length:";
+    static int nlen = strlen (needle);
+
+    result = 0;
+
+    for (int i = 0; i < hlen; ++ i)
+    {
+        for (int j = 0; j < nlen; ++ j)
+        {
+            if (tolower (heystack[i ++]) != needle [j])
+                break;
+
+            if (j == nlen - 1)
+            {
+                for (; i < hlen; ++ i)
+                    if (isdigit (heystack[i]))
+                        result = result * 10 + heystack[i] - '0';
+
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+
+char *strnstr (const char *s, const char *find, size_t slen)
+{
+        char c, sc;
+        size_t len;
+
+        if ((c = *find++) != '\0') {
+                len = strlen(find);
+                do {
+                        do {
+                                if (slen-- < 1 || (sc = *s++) == '\0')
+                                        return (NULL);
+                        } while (sc != c);
+                        if (len > slen)
+                                return (NULL);
+                } while (strncmp(s, find, len) != 0);
+                s--;
+        }
+        return ((char *)s);
+}
