@@ -90,7 +90,7 @@ int main(int argc, char **argv)
             exit (1);
         }
 
-        if (filter && -1 == pcap_compile (handle, &bpf, filter, 0, mask))
+        if (filter != NULL && -1 == pcap_compile (handle, &bpf, filter, 0, mask))
         {
             fprintf(stderr, "pcap_compile: %s\n", errbuf);
             exit (1);
@@ -99,6 +99,12 @@ int main(int argc, char **argv)
         if (-1 == pcap_setfilter (handle, &bpf))
         {
             fprintf(stderr, "pcap_setfilter: %s\n", errbuf);
+            exit (1);
+        }
+
+        if (-1 == pcap_set_snaplen (handle, 0))
+        {
+            fprintf(stderr, "pcap_set_snaplen: %s\n", errbuf);
             exit (1);
         }
 
@@ -289,8 +295,8 @@ void help ()
             "-or-\n"
             "myflow -i eth0 ...\n\n"
             "arguments: \n"
-            "-f bpf filter"
-            "-h show this dialog\n\n");
+            " -f bpf filter\n"
+            " -h show this dialog\n\n");
     exit(1);
 }
 
