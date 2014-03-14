@@ -32,6 +32,8 @@
 #define D(x)
 #endif
 
+#define PPP_HDRLEN 4
+
 using namespace std;
 unordered_map<string, string> bytesMapping;
 list<string> bytesLRU;
@@ -150,6 +152,7 @@ void dumppair (const unordered_map<string, string> & data)
 
 void addpair (time_t *ts, const string & key, string & value, unordered_map<string, string> & data, list<string> & lru)
 {
+//    cout << "### GOT #### " << key << "\n### WITH ### " << value << endl << "#### END ####" << endl;
     unordered_map<string, string>::iterator iter = data.find (key);
     if (iter == data.end())
     {
@@ -337,24 +340,52 @@ void loop (pcap_t *handle)
 {
     struct pcap_pkthdr header;
     const u_char *packet;
+    int dlt = pcap_datalink (handle);
 
     while (NULL != (packet = pcap_next(handle, &header)))
     {
         bpf_u_int32 caplen = header.caplen, offset = 0;
 
-        // ether header
-        if (caplen <= sizeof (struct ether_header))
+        switch (dlt)
         {
-            cerr << "eth" << endl;
-            continue;
-        }
+            case DLT_EN10MB:
+            case DLT_IEEE802:
+                {
+                    // ether header
+                    if (caplen <= sizeof (struct ether_header))
+                    {
+                        cerr << "eth" << endl;
+                        continue;
+                    }
 
-        struct ether_header *eth_header = (struct ether_header *) packet;
-        offset += sizeof (ether_header);
-        if (ntohs(eth_header->ether_type) != ETHERTYPE_IP)
-        {
-            cerr << "ether" << endl;
-            continue;
+                    struct ether_header *eth_header = (struct ether_header *) packet;
+                    offset += sizeof (ether_header);
+                    if (ntohs(eth_header->ether_type) != ETHERTYPE_IP)
+                    {
+                        cerr << "not a ether frame" << endl;
+                        continue;
+                    }
+                }
+                break;
+
+            case DLT_PPP:
+                if (caplen < PPP_HDRLEN)
+                {
+                    D(
+                            cerr << "Incomplete PPP frame" << endl;);
+                    continue;
+                }
+
+                offset += PPP_HDRLEN;
+                break;
+
+            case DLT_RAW:
+                break;
+
+            default:
+                D(
+                        cerr << "Unsupported datalink type: " << dlt << endl;);
+                continue;
         }
 
         // ip header
@@ -378,7 +409,7 @@ void loop (pcap_t *handle)
         // http data
         if (offset >= caplen)
         {
-            cerr << "no more tcp" << endl;
+            cerr << "no more tcp, but caplen was " << caplen << endl;
             continue;
         }
 
