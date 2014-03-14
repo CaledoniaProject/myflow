@@ -1,6 +1,4 @@
-#include <stdio.h>
 #include <pcap.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <netinet/ip.h>
 #include <netinet/ether.h>
@@ -13,7 +11,9 @@
 #define MAX_ENTRY_COUNT 50000
 
 #include <cstring>
+#include <cstdio>
 #include <vector>
+#include <cstdlib>
 #include <unordered_map>
 #include <iterator>
 #include <list>
@@ -50,9 +50,9 @@ int main(int argc, char **argv)
     struct bpf_program bpf;
     char errbuf[PCAP_ERRBUF_SIZE], *device = NULL, *filter = NULL;
     bpf_u_int32 net, mask;
-    int arg;
+    int arg, snaplen = 0;
 
-    while ((arg = getopt (argc, argv, "i:hf:")) != -1)
+    while ((arg = getopt (argc, argv, "i:hf:s:")) != -1)
     {
         switch (arg)
         {
@@ -61,6 +61,9 @@ int main(int argc, char **argv)
                 break;
             case 'f':
                 filter = optarg;
+                break;
+            case 's':
+                snaplen = atoi (optarg);
                 break;
             case 'h':
                 help ();
@@ -96,13 +99,13 @@ int main(int argc, char **argv)
             exit (1);
         }
 
-        if (-1 == pcap_setfilter (handle, &bpf))
+        if (filter && -1 == pcap_setfilter (handle, &bpf))
         {
             fprintf(stderr, "pcap_setfilter: %s\n", errbuf);
             exit (1);
         }
 
-        if (-1 == pcap_set_snaplen (handle, 0))
+        if (-1 == pcap_set_snaplen (handle, snaplen))
         {
             fprintf(stderr, "pcap_set_snaplen: %s\n", errbuf);
             exit (1);
@@ -296,6 +299,7 @@ void help ()
             "myflow -i eth0 ...\n\n"
             "arguments: \n"
             " -f bpf filter\n"
+            " -s snaplen\n"
             " -h show this dialog\n\n");
     exit(1);
 }
