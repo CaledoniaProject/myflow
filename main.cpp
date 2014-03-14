@@ -24,6 +24,8 @@
 #include <antidebug.h>
 #endif
 
+//#define DEBUG
+
 #ifdef DEBUG 
 #define D(x) x
 #else 
@@ -275,14 +277,21 @@ bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result)
     {
         for (int j = 0; j < nlen; ++ j)
         {
-            if (tolower (heystack[i ++]) != needle [j])
-                break;
+            if (tolower (heystack[i ++]) != tolower (needle [j]))
+            {
+                -- i; break;
+            }
 
             if (j == nlen - 1)
             {
                 for (; i < hlen; ++ i)
+                {
+                    D(cerr << "Length header: " << heystack[i] << endl);
                     if (isdigit (heystack[i]))
                         result = result * 10 + heystack[i] - '0';
+                    else if (heystack[i] == '\n')
+                        break;
+                }
 
                 return true;
             }
