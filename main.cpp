@@ -121,6 +121,7 @@ int main(int argc, char **argv)
     // offline
     else 
     {
+
         for (int i = optind; i < argc; ++ i)
         {
             if (! (handle = pcap_open_offline(argv[i], errbuf)))
@@ -152,7 +153,6 @@ void dumppair (const unordered_map<string, string> & data)
 
 void addpair (time_t *ts, const string & key, string & value, unordered_map<string, string> & data, list<string> & lru)
 {
-//    cout << "### GOT #### " << key << "\n### WITH ### " << value << endl << "#### END ####" << endl;
     unordered_map<string, string>::iterator iter = data.find (key);
     if (iter == data.end())
     {
@@ -173,11 +173,10 @@ void addpair (time_t *ts, const string & key, string & value, unordered_map<stri
         string combined = (*iter).second + value;
         if (process_http (ts, key, combined))
         {
-            data.erase (key);
             return;
         }
 
-        data[key] = value;
+        data[key] = combined;
     }
 }
 
@@ -214,6 +213,8 @@ bool process_http (time_t *ts, const string & id, string & bytes)
         // Ending here
         if (payloadPos < bytes.size() - 1)
         {
+            D(
+                    cerr << "Packe is complete (GET)");
             dump_packet (ts, id, bytes);
             return true;
         }
@@ -241,6 +242,8 @@ bool process_http (time_t *ts, const string & id, string & bytes)
 
         if (length == actual)
         {
+            D(
+                    cerr << "Packet is complete (POST)" << endl;);
             dump_packet (ts, id, bytes);
             return true;
         }
@@ -261,7 +264,7 @@ bool process_http (time_t *ts, const string & id, string & bytes)
             D(cerr << " --- Exception --- Unfinished POST request: " << id << endl
                     << "Expecting: " << length << ", actual: " << actual << endl
                     << "Current we have: " << bytes << endl
-                    << endl << endl;);
+                    << endl << "--- FINI Exception ---" << endl << endl;);
         }
     }
 
@@ -289,7 +292,6 @@ bool KMP_getContentLength (const char *heystack, size_t hlen, size_t & result)
             {
                 for (; i < hlen; ++ i)
                 {
-                    D(cerr << "Length header: " << heystack[i] << endl);
                     if (isdigit (heystack[i]))
                         result = result * 10 + heystack[i] - '0';
                     else if (heystack[i] == '\n')
@@ -405,6 +407,12 @@ void loop (pcap_t *handle)
         }
         struct tcphdr *tcp_header = (struct tcphdr *) (packet + offset);
         offset += tcp_header->th_off * 4;
+
+        if (tcp_header->syn || tcp_header->rst)
+        {
+            cerr << "SYN / RST packet" << endl;
+            continue;
+        }
 
         // http data
         if (offset >= caplen)
