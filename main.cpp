@@ -173,6 +173,7 @@ void addpair (time_t *ts, const string & key, string & value, unordered_map<stri
         string combined = (*iter).second + value;
         if (process_http (ts, key, combined))
         {
+            data.erase (key);
             return;
         }
 
@@ -187,7 +188,17 @@ bool lower_test (const char & l, const char & r) {
 void dump_packet (time_t *ts, const string & id, const string & bytes)
 {
     cout << "-- Packet size: " << bytes.size() << ", Time: " << *ts << ", Tuple: " << id << endl;
-    cout << bytes << endl;
+    for (string::const_iterator iter = bytes.begin();
+            iter != bytes.end();
+            ++ iter)
+    {
+        if (isprint (*iter) || *iter == '\n' || *iter == '\r')
+            cout << *iter;
+        else
+            cout << ".";
+    }
+
+    cout << endl;
     cout << "-- End Packet --" << endl << endl;
 }
 
@@ -205,7 +216,9 @@ bool process_http (time_t *ts, const string & id, string & bytes)
     // Incomplete, either GET or POST
     size_t payloadPos = bytes.find ("\r\n\r\n");
     if (payloadPos == bytes.npos)
+    {
         return false;
+    }
 
     // No Content-Length header, ignore payloads even if supplied
     if (! KMP_getContentLength (bytes.c_str(), payloadPos, length))
@@ -410,14 +423,14 @@ void loop (pcap_t *handle)
 
         if (tcp_header->syn || tcp_header->rst)
         {
-            cerr << "SYN / RST packet" << endl;
+//            cerr << "SYN / RST packet" << endl;
             continue;
         }
 
         // http data
         if (offset >= caplen)
         {
-            cerr << "no more tcp, but caplen was " << caplen << endl;
+//            cerr << "no more tcp, but caplen was " << caplen << endl;
             continue;
         }
 
