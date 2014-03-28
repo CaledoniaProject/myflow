@@ -48,6 +48,8 @@ char *strnstr (const char *s, const char *find, size_t slen);
 void help ();
 void loop (pcap_t *handle);
 
+bool badchar = true;
+
 int main(int argc, char **argv)
 {
     pcap_t *handle;
@@ -56,7 +58,7 @@ int main(int argc, char **argv)
     bpf_u_int32 net, mask;
     int arg, snaplen = 0;
 
-    while ((arg = getopt (argc, argv, "i:hf:s:")) != -1)
+    while ((arg = getopt (argc, argv, "ni:hf:s:")) != -1)
     {
         switch (arg)
         {
@@ -68,6 +70,9 @@ int main(int argc, char **argv)
                 break;
             case 's':
                 snaplen = atoi (optarg);
+                break;
+            case 'n':
+                badchar = false;
                 break;
             case 'h':
                 help ();
@@ -201,10 +206,11 @@ void dump_packet (time_t *ts, const string & id, const string & bytes)
             iter != bytes.end();
             ++ iter)
     {
-        if (isprint (*iter) || *iter == '\n' || *iter == '\r')
-            cout << *iter;
-        else
+        if (badchar
+                && (! isprint (*iter) && *iter != '\n' && *iter != '\r'))
             cout << ".";
+        else
+            cout << *iter;
     }
 
     cout << endl;
@@ -350,6 +356,7 @@ void help ()
             "arguments: \n"
             " -f bpf filter\n"
             " -s snaplen\n"
+            " -n do not escape non-printable chars\n"
             " -h show this dialog\n\n");
     exit(1);
 }
