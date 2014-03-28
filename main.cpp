@@ -187,7 +187,16 @@ bool lower_test (const char & l, const char & r) {
 
 void dump_packet (time_t *ts, const string & id, const string & bytes)
 {
-    cout << "-- Packet size: " << bytes.size() << ", Time: " << *ts << ", Tuple: " << id << endl;
+    bool resp = false;
+    // no length check is necessary here, everything is valid
+    if (strnstr (bytes.c_str(), "HTTP/", 5) == bytes.c_str())
+        resp = true;
+
+    if (resp)
+        cout << "-- Response Packet size: " << bytes.size() << ", Time: " << *ts << ", Tuple: " << id << endl;
+    else
+        cout << "-- Packet size: " << bytes.size() << ", Time: " << *ts << ", Tuple: " << id << endl;
+
     for (string::const_iterator iter = bytes.begin();
             iter != bytes.end();
             ++ iter)
@@ -199,7 +208,11 @@ void dump_packet (time_t *ts, const string & id, const string & bytes)
     }
 
     cout << endl;
-    cout << "-- End Packet --" << endl << endl;
+
+    if (resp)
+        cout << "-- End Response Packet --" << endl << endl;
+    else
+        cout << "-- End Packet --" << endl << endl;
 }
 
 bool process_http (time_t *ts, const string & id, string & bytes)
@@ -207,10 +220,20 @@ bool process_http (time_t *ts, const string & id, string & bytes)
     // content-length
     size_t length;
 
+    // 
+    static const char *heading[] = { "GET ", "POST ", "HTTP/" };
+
     // std::find sucks
     size_t minlen = std::min<size_t> (bytes.size(), 5);
-    if (strnstr (bytes.c_str(), "GET ", minlen) != bytes.c_str()
-            && strnstr (bytes.c_str(), "POST ", minlen) != bytes.c_str())
+    bool supported = false;
+    for (int i = 0; i < sizeof (heading) / sizeof (char*); ++ i)
+        if (strnstr (bytes.c_str(), heading[i], minlen) == bytes.c_str())
+        {
+            supported = true;
+            break;
+        }
+
+    if (! supported)
         return true;
 
     // Incomplete, either GET or POST
@@ -423,14 +446,14 @@ void loop (pcap_t *handle)
 
         if (tcp_header->syn || tcp_header->rst)
         {
-//            cerr << "SYN / RST packet" << endl;
+            //            cerr << "SYN / RST packet" << endl;
             continue;
         }
 
         // http data
         if (offset >= caplen)
         {
-//            cerr << "no more tcp, but caplen was " << caplen << endl;
+            //            cerr << "no more tcp, but caplen was " << caplen << endl;
             continue;
         }
 
