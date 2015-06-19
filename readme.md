@@ -20,9 +20,9 @@ Accept-Language: en-US,en;q=0.8,fr;q=0.6,zh-CN;q=0.4,zh;q=0.2,zh-TW;q=0.2,hr;q=0
 -- End Packet --
 </pre>
 
-### Compile ###
+### Compilation ###
 
-On Mac OS, 
+On Mac OS, require homebrew and libpcap installed, modify CFLAGS as needed
 
 <pre>
 make mac
