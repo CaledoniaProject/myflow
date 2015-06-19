@@ -1,7 +1,13 @@
 #include <pcap.h>
 #include <unistd.h>
 #include <netinet/ip.h>
+
+#ifdef __APPLE__
+#include <netinet/if_ether.h>
+#else
 #include <netinet/ether.h>
+#endif
+
 #define __FAVOR_BSD
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -451,11 +457,13 @@ void loop (pcap_t *handle)
         struct tcphdr *tcp_header = (struct tcphdr *) (packet + offset);
         offset += tcp_header->th_off * 4;
 
+#ifndef __APPLE__
         if (tcp_header->syn || tcp_header->rst)
         {
             //            cerr << "SYN / RST packet" << endl;
             continue;
         }
+#endif
 
         // http data
         if (offset >= caplen)
